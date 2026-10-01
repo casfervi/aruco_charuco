@@ -4,11 +4,22 @@
 Exemplos:
     python aruco_pose_xyz.py --camera 0 --marker-size-mm 50
     python aruco_pose_xyz.py --video teste.mp4 --marker-size-mm 50
+    python aruco_pose_xyz.py --video teste.mp4 --marker-size-mm 50 --scale 1.0
     python aruco_pose_xyz.py --camera 0 --marker-size-mm 50 --calibration camera_calibration.npz
 
 O arquivo NPZ de calibracao deve conter:
     camera_matrix: matriz intrinseca 3x3
     dist_coeffs: coeficientes de distorcao
+
+Controles no modo --video:
+    barra "Frame"        arrastar para ir a qualquer ponto do video
+    ESPACO               pausa / continua
+    D ou seta direita    avanca 1 frame (pausa)
+    A ou seta esquerda   volta 1 frame (pausa)
+    L                    avanca ~1 segundo
+    J                    volta ~1 segundo
+    Home / End           vai ao inicio / ao fim
+    Q ou ESC             sair
 """
 
 import argparse
@@ -36,6 +47,15 @@ ARUCO_DICTIONARIES = {
     "DICT_ARUCO_ORIGINAL": cv2.aruco.DICT_ARUCO_ORIGINAL,
 }
 
+# Codigos de teclas especiais retornados por cv2.waitKeyEx
+# (Windows / GTK no Linux).
+KEYS_LEFT = {2424832, 65361}
+KEYS_RIGHT = {2555904, 65363}
+KEYS_HOME = {2359296, 65360}
+KEYS_END = {2293760, 65367}
+
+TRACKBAR_NAME = "Frame"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -61,6 +81,10 @@ def parse_args():
                         help="Largura solicitada para a webcam.")
     parser.add_argument("--height", type=int, default=None,
                         help="Altura solicitada para a webcam.")
+    parser.add_argument("--scale", type=float, default=None,
+                        help="Escala de exibicao. 1.0 = tamanho original. "
+                             "Padrao: ajusta para caber em 1600x900 sem ampliar. "
+                             "Nao afeta a deteccao, so a janela.")
     return parser.parse_args()
 
 
@@ -148,10 +172,13 @@ def estimate_marker_pose(corners, object_points, camera_matrix, dist_coeffs):
 
 
 def draw_pose_information(frame, marker_id, corners, rvec, tvec, euler,
-                          camera_matrix, dist_coeffs, axis_length_mm):
+                          camera_matrix, dist_coeffs, axis_length_mm,
+                          ui_scale=1.0):
+    """ui_scale > 1 engrossa linhas e texto para continuarem legiveis
+    quando o frame em resolucao total e reduzido na exibicao."""
     cv2.drawFrameAxes(
         frame, camera_matrix, dist_coeffs, rvec, tvec,
-        axis_length_mm, 3
+        axis_length_mm, max(1, int(round(3 * ui_scale)))
     )
     points = np.asarray(corners).reshape(4, 2)
     center = points.mean(axis=0).astype(int)
@@ -163,15 +190,20 @@ def draw_pose_information(frame, marker_id, corners, rvec, tvec, euler,
         f"X={x_mm:+.1f} mm  Y={y_mm:+.1f} mm  Z={z_mm:+.1f} mm",
         f"roll={roll:+.1f}  pitch={pitch:+.1f}  yaw={yaw:+.1f} deg",
     ]
-    x_text = int(center[0] + 12)
-    y_text = int(center[1] - 40)
+    font_scale = 0.55 * ui_scale
+    x_text = int(center[0] + 12 * ui_scale)
+    y_text = int(center[1] - 40 * ui_scale)
+    line_step = int(22 * ui_scale)
+    thick_outer = max(1, int(round(3 * ui_scale)))
+    thick_inner = max(1, int(round(1 * ui_scale)))
     for index, text in enumerate(lines):
-        cv2.putText(frame, text, (x_text, y_text + index * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255),
-                    3, cv2.LINE_AA)
-        cv2.putText(frame, text, (x_text, y_text + index * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (20, 20, 20),
-                    1, cv2.LINE_AA)
+        position = (x_text, y_text + index * line_step)
+        cv2.putText(frame, text, position,
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255),
+                    thick_outer, cv2.LINE_AA)
+        cv2.putText(frame, text, position,
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (20, 20, 20),
+                    thick_inner, cv2.LINE_AA)
 
 
 def create_detector(dictionary_name):
@@ -183,24 +215,88 @@ def create_detector(dictionary_name):
     return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
+def annotate_frame(raw_frame, detector, object_points, camera_matrix,
+                   dist_coeffs, axis_length_mm, ui_scale=1.0):
+    """Detecta ArUcos, desenha poses e devolve (imagem, lista de poses)."""
+    frame = raw_frame.copy()
+    poses = []
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    corners, ids, _rejected = detector.detectMarkers(gray)
+
+    if ids is not None and len(ids) > 0:
+        cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+        for marker_corners, marker_id_value in zip(corners, ids):
+            marker_id = int(np.asarray(marker_id_value).reshape(-1)[0])
+            pose = estimate_marker_pose(
+                marker_corners, object_points, camera_matrix, dist_coeffs
+            )
+            if pose is None:
+                continue
+            rvec, tvec, _rotation_matrix, euler = pose
+            draw_pose_information(
+                frame, marker_id, marker_corners, rvec, tvec, euler,
+                camera_matrix, dist_coeffs, axis_length_mm, ui_scale
+            )
+            poses.append((marker_id, tvec.reshape(3), euler))
+    else:
+        cv2.putText(frame, "Nenhum ArUco detectado",
+                    (int(15 * ui_scale), int(35 * ui_scale)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8 * ui_scale, (0, 0, 255),
+                    max(1, int(round(2 * ui_scale))), cv2.LINE_AA)
+    return frame, poses
+
+
+def draw_status(frame, calibrated, is_video, index, total, paused):
+    height = frame.shape[0]
+    status = "CALIBRADA" if calibrated else "INTRINSECOS APROXIMADOS"
+    cv2.putText(frame, status, (15, height - 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                (0, 255, 0) if calibrated else (0, 165, 255),
+                2, cv2.LINE_AA)
+    if is_video:
+        position = f"frame {index + 1}/{total}" if total > 0 else f"frame {index + 1}"
+        text = f"{position}  {'PAUSADO' if paused else 'REPRODUZINDO'}"
+        cv2.putText(frame, text, (15, height - 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255),
+                    3, cv2.LINE_AA)
+        cv2.putText(frame, text, (15, height - 45),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (20, 20, 20),
+                    1, cv2.LINE_AA)
+
+
 def main():
     args = parse_args()
     if args.marker_size_mm <= 0:
         raise ValueError("--marker-size-mm deve ser maior que zero.")
 
     capture = open_capture(args)
-    ok, frame = capture.read()
-    if not ok or frame is None:
+    ok, raw_frame = capture.read()
+    if not ok or raw_frame is None:
         capture.release()
         raise RuntimeError("A fonte abriu, mas nao entregou o primeiro frame.")
 
-    height, width = frame.shape[:2]
+    is_video = bool(args.video)
+    height, width = raw_frame.shape[:2]
+    if args.scale is not None and args.scale <= 0:
+        raise ValueError("--scale deve ser maior que zero.")
+    # Escala so da exibicao: a deteccao sempre usa o frame em resolucao total.
+    display_scale = args.scale if args.scale else min(
+        1.0, 1600.0 / width, 900.0 / height
+    )
+    ui_scale = max(1.0, 1.0 / display_scale)
     camera_matrix, dist_coeffs, calibrated = load_camera_calibration(
         args.calibration, width, height
     )
     detector = create_detector(args.dictionary)
     object_points = marker_object_points(args.marker_size_mm)
     axis_length_mm = args.axis_length_mm or args.marker_size_mm * 0.5
+
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) if is_video else 0
+    fps = capture.get(cv2.CAP_PROP_FPS) if is_video else 0.0
+    if not fps or fps != fps or fps <= 0:
+        fps = 30.0
+    jump_frames = max(1, int(round(fps)))  # ~1 segundo
 
     csv_file = None
     csv_writer = None
@@ -221,97 +317,137 @@ def main():
         print("[AVISO] Usando intrinsecos aproximados.")
         print("[AVISO] Os valores XYZ nao devem ser usados como medicao precisa.")
     print("Eixos OpenCV: X=direita, Y=baixo na camera, Z=para frente da camera.")
-    print("Pressione Q ou ESC para sair.")
+    print(f"Fonte: {width}x{height} px | exibicao a {display_scale:.2f}x "
+          "(deteccao sempre em resolucao total).")
+    if is_video:
+        print("Video: barra 'Frame' | ESPACO pausa | A/D (ou setas) +-1 frame | "
+              "J/L +-1 s | Home/End | Q ou ESC sai.")
+    else:
+        print("Pressione Q ou ESC para sair.")
 
-    frame_index = 0
+    window_name = "ArUco - Pose XYZ"
+    # AUTOSIZE: a janela mostra a imagem pixel a pixel, sem reamostragem do
+    # backend. A reducao (se houver) e feita por nos com INTER_AREA.
+    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+
+    # Estado do player (so faz sentido em video)
+    state = {"index": 0, "seek": None}
+
+    if is_video and total > 1:
+        def on_trackbar(value):
+            # Ignora o callback disparado pelo nosso proprio setTrackbarPos
+            if value != state["index"]:
+                state["seek"] = value
+
+        cv2.createTrackbar(TRACKBAR_NAME, window_name, 0, total - 1, on_trackbar)
+
+    index = 0
+    paused = False
+    need_process = True
+    display = None
+    logged_frames = set()  # evita linhas duplicadas no CSV ao revisitar frames
     start_time = time.perf_counter()
 
     try:
         while True:
-            if frame_index > 0:
-                ok, frame = capture.read()
-                if not ok or frame is None:
-                    break
-            frame_index += 1
-
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            corners, ids, rejected = detector.detectMarkers(gray)
-
-            if ids is not None and len(ids) > 0:
-                cv2.aruco.drawDetectedMarkers(
-                    frame,
-                    corners,
-                    ids
+            if need_process:
+                display, poses = annotate_frame(
+                    raw_frame, detector, object_points, camera_matrix,
+                    dist_coeffs, axis_length_mm, ui_scale
                 )
-            
-                for marker_corners, marker_id_value in zip(
-                    corners,
-                    ids
-                ):
-                    marker_id = int(
-                        np.asarray(
-                            marker_id_value
-                        ).reshape(-1)[0]
-                    )
-            
-                    pose = estimate_marker_pose(
-                        marker_corners,
-                        object_points,
-                        camera_matrix,
-                        dist_coeffs
-                    )
-            
-                    if pose is None:
-                        continue
-            
-                    (
-                        rvec,
-                        tvec,
-                        rotation_matrix,
-                        euler
-                    ) = pose
-            
-                    draw_pose_information(
-                        frame,
-                        marker_id,
-                        marker_corners,
-                        rvec,
-                        tvec,
-                        euler,
-                        camera_matrix,
-                        dist_coeffs,
-                        axis_length_mm
-                    )
-            
-                    if csv_writer is not None:
-                        x_mm, y_mm, z_mm = tvec.reshape(3)
-                        roll, pitch, yaw = euler
-            
+                if csv_writer is not None and index not in logged_frames:
+                    logged_frames.add(index)
+                    timestamp = (index / fps) if is_video \
+                        else (time.perf_counter() - start_time)
+                    for marker_id, tvec, euler in poses:
                         csv_writer.writerow([
-                            time.perf_counter() - start_time,
-                            frame_index,
-                            marker_id,
-                            float(x_mm),
-                            float(y_mm),
-                            float(z_mm),
-                            float(roll),
-                            float(pitch),
-                            float(yaw)
+                            timestamp, index + 1, marker_id,
+                            float(tvec[0]), float(tvec[1]), float(tvec[2]),
+                            float(euler[0]), float(euler[1]), float(euler[2]),
                         ])
-            else:
-                cv2.putText(frame, "Nenhum ArUco detectado", (15, 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255),
-                            2, cv2.LINE_AA)
+                need_process = False
 
-            status = "CALIBRADA" if calibrated else "INTRINSECOS APROXIMADOS"
-            cv2.putText(frame, status, (15, height - 18),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                        (0, 255, 0) if calibrated else (0, 165, 255),
-                        2, cv2.LINE_AA)
-            cv2.imshow("ArUco - Pose XYZ", frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
+            if abs(display_scale - 1.0) > 1e-6:
+                interpolation = (cv2.INTER_AREA if display_scale < 1.0
+                                 else cv2.INTER_CUBIC)
+                shown = cv2.resize(display, None, fx=display_scale,
+                                   fy=display_scale,
+                                   interpolation=interpolation)
+            else:
+                shown = display.copy()
+            draw_status(shown, calibrated, is_video, index, total, paused)
+            cv2.imshow(window_name, shown)
+
+            if is_video and total > 1:
+                state["index"] = index
+                cv2.setTrackbarPos(TRACKBAR_NAME, window_name, index)
+
+            key_ex = cv2.waitKeyEx(30 if paused else 1)
+            key = key_ex & 0xFF if key_ex != -1 else -1
+
+            if key in (ord("q"), ord("Q"), 27):
                 break
+
+            target = None  # indice absoluto do proximo frame a mostrar
+
+            if is_video:
+                if key == ord(" "):
+                    paused = not paused
+                elif key in (ord("d"), ord("D")) or key_ex in KEYS_RIGHT:
+                    paused = True
+                    target = index + 1
+                elif key in (ord("a"), ord("A")) or key_ex in KEYS_LEFT:
+                    paused = True
+                    target = index - 1
+                elif key in (ord("l"), ord("L")):
+                    target = index + jump_frames
+                elif key in (ord("j"), ord("J")):
+                    target = index - jump_frames
+                elif key_ex in KEYS_HOME:
+                    target = 0
+                elif key_ex in KEYS_END and total > 0:
+                    target = total - 1
+
+                if state["seek"] is not None:  # barra de tempo
+                    target = state["seek"]
+                    state["seek"] = None
+
+            if target is None and not paused:
+                target = index + 1  # reproducao normal
+
+            if target is None:
+                continue
+
+            if total > 0:
+                target = max(0, min(target, total - 1))
+            else:
+                target = max(0, target)
+
+            if target == index:
+                # Chegou ao fim do video: fica pausado no ultimo frame.
+                if is_video and not paused and total > 0 and index >= total - 1:
+                    paused = True
+                continue
+
+            if target == index + 1:
+                ok, new_frame = capture.read()  # leitura sequencial (rapida)
+            else:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, target)
+                ok, new_frame = capture.read()
+
+            if ok and new_frame is not None:
+                raw_frame = new_frame
+                index = target
+                need_process = True
+            else:
+                if is_video:
+                    # Fim inesperado (contagem de frames imprecisa): pausa
+                    # e deixa o usuario voltar.
+                    paused = True
+                    total = index + 1
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+                else:
+                    break
     finally:
         capture.release()
         cv2.destroyAllWindows()
