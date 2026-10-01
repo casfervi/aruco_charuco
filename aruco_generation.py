@@ -107,7 +107,7 @@ def main():
 
         output_path = os.path.join(
             args.output_dir,
-            f"marker_{marker_id}.png",
+            f"marker_{marker_id}_{args.dictionary}.png",
         )
 
         if not cv.imwrite(output_path, marker_image):
