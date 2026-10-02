@@ -80,10 +80,10 @@ Example:
 
 ```text
 markers/
-├── marker_0_DICT_5X5_250.png
-├── marker_1_DICT_5X5_250.png
-├── marker_2_DICT_5X5_250.png
-├── marker_3_DICT_5X5_250.png
+├── marker_0.png
+├── marker_1.png
+├── marker_2.png
+├── marker_3.png
 └── charuco_board.png
 ```
 
@@ -173,11 +173,11 @@ python aruco_generation.py \
 The generated files will be:
 
 ```text
-marker_10_DICT_5X5_250.png
-marker_11_DICT_5X5_250.png
-marker_12_DICT_5X5_250.png
-marker_13_DICT_5X5_250.png
-marker_14_DICT_5X5_250.png
+marker_10.png
+marker_11.png
+marker_12.png
+marker_13.png
+marker_14.png
 ```
 
 ### Select the marker image size
