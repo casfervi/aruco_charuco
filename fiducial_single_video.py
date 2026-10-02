@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Single-video player with ArUco / AprilTag tracking.
+"""
+Updated on Fri Oct  2 15:03:59 2026
+
+@author: vinicius.ferreira
+
+
+Single-video player with ArUco / AprilTag tracking.
 
 Layout (follows the window size, resize it freely):
 - header with file info and detection status;
