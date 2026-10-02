@@ -147,6 +147,11 @@ python fiducial_single_video.py videos/test_video.mp4   --dictionary DICT_APRILT
 
 Supported output extensions are `.mp4` and `.avi`.
 
+#### Example:
+
+https://github.com/user-attachments/assets/0b4c89be-c6e0-4b6a-95f9-7fa396a7c3a8
+
+
 ---
 
 ## Output Directories
