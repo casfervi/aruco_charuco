@@ -9,7 +9,8 @@ The repository can be used as a starting point for projects involving:
 - ArUco and AprilTag detection;
 - marker pose estimation;
 - visualization of the X, Y, and Z axes;
-- displacement tracking in pixels or millimeters;
+- single-marker and multiple-marker displacement tracking;
+- displacement analysis in pixels or millimeters;
 - intrinsic camera calibration workflows;
 - interactive video analysis and dashboard export.
 
@@ -23,9 +24,10 @@ The repository can be used as a starting point for projects involving:
 ├── aruco_pose_xyz.py
 ├── charuco_generation.py
 ├── fiducial_single_video.py
+├── fiducial_multi_video.py
 ├── markers/
-├── videos/                     # suggested folder for test videos
-├── camera_calibration.npz      # optional
+├── videos/                       # suggested folder for test videos
+├── camera_calibration.npz        # optional
 └── README.md
 ```
 
@@ -86,20 +88,44 @@ ChArUco boards are useful for intrinsic camera calibration because chessboard in
 
 Analyzes one recorded video containing an ArUco or AprilTag marker and presents the tracking results in a resizable visual dashboard.
 
-This utility is intended for displacement analysis rather than only pose visualization. It preprocesses the complete video, tracks one selected marker ID, and then opens an interactive player containing:
+This utility is intended for detailed displacement analysis of one selected marker. It preprocesses the complete video and then opens an interactive player containing:
 
 - a large video panel with the detected marker outlined;
 - an accumulated XY displacement plane;
-- a whole-video graph of `dX` and `dY`;
+- whole-video graphs of `dX` and `dY`;
 - a detection timeline;
 - current displacement and net displacement;
 - accumulated path length;
 - frame-by-frame playback and seeking;
 - dashboard video export.
 
-#### Supported marker families
+### `fiducial_multi_video.py`
 
-The script supports the ArUco dictionaries included in the repository workflow and the following AprilTag dictionaries exposed by OpenCV:
+Analyzes several ArUco or AprilTag markers simultaneously in a single recorded video.
+
+Despite the file name, the input is one video containing multiple fiducial markers. Each tracked marker receives an individual color that is used consistently in the video overlay, XY trajectory, time graphs, and detection strip.
+
+The dashboard includes:
+
+- a large video panel with all tracked markers outlined;
+- one accumulated XY trajectory per marker;
+- whole-video X or `dX` graphs with one line per marker;
+- whole-video Y or `dY` graphs with one line per marker;
+- an individual detection strip for each marker;
+- current X/Y or `dX`/`dY` values;
+- accumulated path length for each marker;
+- interactive playback and seeking;
+- direct MP4 or AVI dashboard export.
+
+By default, each marker is measured relative to the first frame in which that marker is detected. This causes all relative trajectories to start at the origin and makes them easier to compare. The `--absolute` option displays the raw positions instead.
+
+When marker IDs are not provided explicitly, the program can automatically select the most frequently detected IDs. Occasional IDs can be filtered with `--min-detections`, while `--max-markers` limits the number of markers displayed in the dashboard.
+
+---
+
+## Supported Marker Families
+
+The fiducial tracking scripts support the ArUco dictionaries included in the repository workflow and the following AprilTag dictionaries exposed by OpenCV:
 
 ```text
 DICT_APRILTAG_16h5
@@ -108,49 +134,32 @@ DICT_APRILTAG_36h10
 DICT_APRILTAG_36h11
 ```
 
-The selected dictionary must match the physical marker in the video.
+The selected dictionary must match the physical marker shown in the video.
 
-#### Pixel and millimeter displacement
+---
 
-Without `--marker-size-mm`, displacement is calculated from the marker center and reported in pixels.
+## Pixel and Millimeter Displacement
 
-With `--marker-size-mm`, the script estimates marker pose using `cv2.solvePnP` with `SOLVEPNP_IPPE_SQUARE` and reports displacement in millimeters.
+Without `--marker-size-mm`, the tracking programs calculate position from the marker center and report results in pixels.
 
-For accurate metric results, also provide a calibration file containing:
+With `--marker-size-mm`, marker pose is estimated with:
+
+```python
+cv2.solvePnP(..., flags=cv2.SOLVEPNP_IPPE_SQUARE)
+```
+
+The resulting positions are reported in millimeters because the marker object points are defined in millimeters.
+
+For accurate metric results, provide a calibration file containing:
 
 ```text
 camera_matrix
 dist_coeffs
 ```
 
-#### Dashboard layout
+If no calibration file is provided, approximate camera parameters may be generated so the program can run. Values obtained from approximate intrinsics must not be treated as metrologically accurate.
 
-The dashboard includes:
-
-1. **Header** with the video name, dictionary, marker ID, playback state, frame number, timestamp, and detection status.
-2. **Video panel** with the original aspect ratio preserved and the tracked marker highlighted.
-3. **Accumulated XY plane** showing the full trajectory and the path reached at the current frame.
-4. **Whole-video displacement graph** showing `dX` and `dY` for the complete recording.
-5. **Detection timeline** indicating valid and missing detections over time.
-
-The interactive window can be resized, and the dashboard adapts to the current window dimensions.
-
-#### Exporting the dashboard
-
-Press `S` during playback to export the complete dashboard as an MP4 file next to the input video.
-
-The dashboard can also be exported directly from the command line with `--save`:
-
-```bash
-python fiducial_single_video.py videos/test_video.mp4   --dictionary DICT_APRILTAG_36h11   --save output_dashboard.mp4
-```
-
-Supported output extensions are `.mp4` and `.avi`.
-
-#### Example:
-
-https://github.com/user-attachments/assets/0b4c89be-c6e0-4b6a-95f9-7fa396a7c3a8
-
+For `fiducial_multi_video.py`, the same value supplied through `--marker-size-mm` is applied to every tracked marker. Metric multi-marker analysis therefore assumes that all tracked markers have the same physical outer side length.
 
 ---
 
@@ -159,8 +168,6 @@ https://github.com/user-attachments/assets/0b4c89be-c6e0-4b6a-95f9-7fa396a7c3a8
 ### `markers/`
 
 Default directory for generated marker images and ChArUco boards.
-
-Example:
 
 ```text
 markers/
@@ -175,12 +182,11 @@ markers/
 
 Suggested directory for test and example videos.
 
-Example:
-
 ```text
 videos/
 ├── aruco_test.mp4
-└── apriltag_test.mp4
+├── apriltag_test.mp4
+└── multiple_markers_test.mp4
 ```
 
 ---
@@ -224,7 +230,8 @@ The suggested virtual-environment name is `aruco`.
 
 ```bat
 python -m venv aruco
-aruco\Scriptsctivate
+aruco\Scripts\activate
+python -m pip install --upgrade pip
 pip install opencv-contrib-python numpy
 ```
 
@@ -233,6 +240,7 @@ pip install opencv-contrib-python numpy
 ```bash
 python3 -m venv aruco
 source aruco/bin/activate
+python -m pip install --upgrade pip
 pip install opencv-contrib-python numpy
 ```
 
@@ -247,6 +255,7 @@ python aruco_generation.py --help
 python aruco_pose_xyz.py --help
 python charuco_generation.py --help
 python fiducial_single_video.py --help
+python fiducial_multi_video.py --help
 ```
 
 ---
@@ -268,13 +277,21 @@ python aruco_generation.py --num-markers 10
 ### Select the starting ID
 
 ```bash
-python aruco_generation.py   --num-markers 5   --start-id 10
+python aruco_generation.py \
+  --num-markers 5 \
+  --start-id 10
 ```
 
 ### Select image size, dictionary, and output directory
 
 ```bash
-python aruco_generation.py   --num-markers 4   --start-id 20   --marker-size 600   --dictionary DICT_5X5_250   --output-dir markers   --show
+python aruco_generation.py \
+  --num-markers 4 \
+  --start-id 20 \
+  --marker-size 600 \
+  --dictionary DICT_5X5_250 \
+  --output-dir markers \
+  --show
 ```
 
 `--marker-size` controls image resolution in pixels. It does not define the physical printed size in millimeters.
@@ -288,19 +305,29 @@ The dictionary used during detection must match the dictionary used during gener
 ### Webcam
 
 ```bash
-python aruco_pose_xyz.py   --camera 0   --marker-size-mm 20   --dictionary DICT_5X5_250
+python aruco_pose_xyz.py \
+  --camera 0 \
+  --marker-size-mm 20 \
+  --dictionary DICT_5X5_250
 ```
 
 ### Video file
 
 ```bash
-python aruco_pose_xyz.py   --video videos/test_video.mp4   --marker-size-mm 20   --dictionary DICT_5X5_250
+python aruco_pose_xyz.py \
+  --video videos/test_video.mp4 \
+  --marker-size-mm 20 \
+  --dictionary DICT_5X5_250
 ```
 
 ### Export pose data to CSV
 
 ```bash
-python aruco_pose_xyz.py   --camera 0   --marker-size-mm 20   --dictionary DICT_5X5_250   --csv poses.csv
+python aruco_pose_xyz.py \
+  --camera 0 \
+  --marker-size-mm 20 \
+  --dictionary DICT_5X5_250 \
+  --csv poses.csv
 ```
 
 The CSV may contain:
@@ -320,23 +347,30 @@ yaw_deg
 ### Load intrinsic camera calibration
 
 ```bash
-python aruco_pose_xyz.py   --camera 0   --marker-size-mm 20   --calibration camera_calibration.npz
+python aruco_pose_xyz.py \
+  --camera 0 \
+  --marker-size-mm 20 \
+  --calibration camera_calibration.npz
 ```
 
 ---
 
-## Single-Video Displacement Dashboard
+## Single-Marker Video Dashboard
 
 ### ArUco example
 
 ```bash
-python fiducial_single_video.py videos/aruco_test.mp4   --dictionary DICT_4X4_250   --marker-id 0
+python fiducial_single_video.py videos/aruco_test.mp4 \
+  --dictionary DICT_4X4_250 \
+  --marker-id 0
 ```
 
 ### AprilTag example
 
 ```bash
-python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APRILTAG_36h11   --marker-id 0
+python fiducial_single_video.py videos/apriltag_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-id 0
 ```
 
 If `--marker-id` is omitted, the program selects the lowest marker ID found in the first successful detection.
@@ -344,7 +378,11 @@ If `--marker-id` is omitted, the program selects the lowest marker ID found in t
 ### Millimeter displacement with calibration
 
 ```bash
-python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APRILTAG_36h11   --marker-id 0   --marker-size-mm 50   --calibration camera_calibration.npz
+python fiducial_single_video.py videos/apriltag_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-id 0 \
+  --marker-size-mm 50 \
+  --calibration camera_calibration.npz
 ```
 
 ### Full-resolution AprilTag detection
@@ -352,7 +390,9 @@ python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APR
 AprilTag detection uses `--detect-scale 0.5` by default. If the marker is small in the image, use:
 
 ```bash
-python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APRILTAG_36h11   --detect-scale 1.0
+python fiducial_single_video.py videos/apriltag_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --detect-scale 1.0
 ```
 
 The displayed video and saved coordinates remain associated with the original video resolution. `--detect-scale` changes only the image resolution used by the detector.
@@ -360,16 +400,148 @@ The displayed video and saved coordinates remain associated with the original vi
 ### Initial window and export size
 
 ```bash
-python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APRILTAG_36h11   --width 1920   --height 1080
+python fiducial_single_video.py videos/apriltag_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --width 1920 \
+  --height 1080
 ```
 
 ### Direct dashboard export
 
 ```bash
-python fiducial_single_video.py videos/apriltag_test.mp4   --dictionary DICT_APRILTAG_36h11   --save output_dashboard.mp4   --width 1920   --height 1080
+python fiducial_single_video.py videos/apriltag_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --save output_dashboard.mp4 \
+  --width 1920 \
+  --height 1080
 ```
 
-### Playback controls
+### Example
+
+https://github.com/user-attachments/assets/0b4c89be-c6e0-4b6a-95f9-7fa396a7c3a8
+
+---
+
+## Multiple-Marker Video Dashboard
+
+`fiducial_multi_video.py` tracks several ArUco or AprilTag markers in one video. The program can use explicitly selected IDs or automatically retain the most frequently detected IDs.
+
+### Track every relevant marker automatically
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11
+```
+
+By default:
+
+- IDs detected in fewer than three frames are ignored;
+- up to eight markers are displayed;
+- the most frequently detected markers are prioritized;
+- each trajectory begins at the origin using the marker's first valid detection.
+
+### Track specific marker IDs
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_4X4_250 \
+  --marker-ids 0 1 2 3
+```
+
+Explicit ID selection is recommended when the expected markers are already known.
+
+### Filter occasional detections and limit the dashboard
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_5X5_50 \
+  --min-detections 10 \
+  --max-markers 6
+```
+
+- `--min-detections` ignores IDs seen in fewer than the selected number of frames;
+- `--max-markers` limits the number of automatically selected markers;
+- the implemented maximum is 14 simultaneously tracked markers.
+
+### Millimeter displacement with calibration
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-ids 0 1 2 3 \
+  --marker-size-mm 50 \
+  --calibration camera_calibration.npz
+```
+
+All selected markers are assumed to have the same physical side length.
+
+### Show absolute positions
+
+The default view displays displacement from the first valid detection of each marker. To plot raw X and Y positions instead, use:
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-ids 0 1 2 3 \
+  --absolute
+```
+
+In relative mode, the graphs display `dX` and `dY`. In absolute mode, the graphs display `X` and `Y`.
+
+### Full-resolution detection
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --detect-scale 1.0
+```
+
+Use full resolution when the markers are small in the image or when maximum corner detail is required.
+
+### Detect every second frame
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --frame-step 2
+```
+
+A larger `--frame-step` reduces preprocessing time but creates frames without a new marker detection. Use the default value of `1` for the most complete trajectories.
+
+### Set the initial window size
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --width 1920 \
+  --height 1080
+```
+
+The interactive window is resizable, and the dashboard follows the current window dimensions.
+
+### Direct dashboard export
+
+```bash
+python fiducial_multi_video.py videos/multiple_markers_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-ids 0 1 2 3 \
+  --save output_multi_dashboard.mp4 \
+  --width 1920 \
+  --height 1080
+```
+
+Supported export formats:
+
+- `.mp4`, using `mp4v`;
+- `.avi`, using `MJPG`.
+
+Press `S` during interactive playback to export the complete dashboard next to the source video. The output file uses the `_multi_dashboard` suffix and the current window dimensions.
+
+---
+
+## Dashboard Playback Controls
+
+The single-marker and multiple-marker dashboards use the following controls:
 
 ```text
 SPACE          Pause or resume
@@ -404,14 +576,14 @@ The projected axes are normally drawn as:
 
 ### Dashboard displacement coordinates
 
-For `fiducial_single_video.py`:
+For `fiducial_single_video.py` and `fiducial_multi_video.py`:
 
 - positive `dX` indicates movement to the right;
 - negative `dX` indicates movement to the left;
 - positive `dY` indicates movement downward;
 - negative `dY` indicates movement upward.
 
-Displacement is measured relative to the first frame in which the selected marker is detected.
+In relative mode, displacement is measured from the first frame in which each selected marker is detected. In the multiple-marker dashboard, each marker therefore has its own reference frame.
 
 ---
 
