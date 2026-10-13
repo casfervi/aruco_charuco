@@ -10,6 +10,7 @@ The repository can be used as a starting point for projects involving:
 - marker pose estimation;
 - visualization of the X, Y, and Z axes;
 - single-marker and multiple-marker displacement tracking;
+- curve fitting through several markers, with curvature and radius analysis;
 - displacement analysis in pixels or millimeters;
 - intrinsic camera calibration workflows;
 - interactive video analysis and dashboard export.
@@ -25,6 +26,7 @@ The repository can be used as a starting point for projects involving:
 ├── charuco_generation.py
 ├── fiducial_single_video.py
 ├── fiducial_multi_video.py
+├── fiducial_curvature.py
 ├── markers/
 ├── videos/                       # suggested folder for test videos
 ├── camera_calibration.npz        # optional
@@ -121,6 +123,30 @@ By default, each marker is measured relative to the first frame in which that ma
 
 When marker IDs are not provided explicitly, the program can automatically select the most frequently detected IDs. Occasional IDs can be filtered with `--min-detections`, while `--max-markers` limits the number of markers displayed in the dashboard.
 
+### `fiducial_curvature.py`
+
+Fits a curve through several ArUco or AprilTag markers placed along a flexible object, such as a cable or hose, and calculates the curvature and the radius of curvature at each marker and along the whole curve.
+
+As in the other fiducial utilities, the input is one recorded video. In every frame, the detected markers are sorted from the lowest to the highest ID and a smooth curve is fitted through their centers. At least three markers must be detected in the same frame to obtain curvature. If a marker is not detected in a frame, the curve is built from the remaining markers.
+
+The dashboard includes:
+
+- a large video panel with the fitted curve drawn over the video and colored by the magnitude of its curvature;
+- all tracked markers outlined in individual colors, with their IDs;
+- a curvature profile along the curve for the current frame, with the value at each marker;
+- a 3-point cross-check at the interior markers;
+- a whole-video graph of the average curvature;
+- a whole-video graph of the average radius of curvature;
+- an individual detection strip for each marker, with its current curvature and radius;
+- the curve length and the minimum and mean radius of the current frame;
+- interactive playback and seeking;
+- direct MP4 or AVI dashboard export;
+- optional CSV export of the per-frame, per-marker results.
+
+The average graphs combine the markers detected in each frame. Frames with fewer than three detected markers have no curvature and appear as gaps.
+
+The program does not use `cv2.solvePnP` and does not require camera calibration. Millimeter values are obtained from the apparent size of each marker, as described in [Pixel and Millimeter Displacement](#pixel-and-millimeter-displacement).
+
 ---
 
 ## Supported Marker Families
@@ -161,6 +187,20 @@ If no calibration file is provided, approximate camera parameters may be generat
 
 For `fiducial_multi_video.py`, the same value supplied through `--marker-size-mm` is applied to every tracked marker. Metric multi-marker analysis therefore assumes that all tracked markers have the same physical outer side length.
 
+### Curvature program
+
+`fiducial_curvature.py` does not use pose estimation. Marker positions are the marker centers in the image, and curvature and radius are reported in `1/px` and pixels by default.
+
+With `--marker-size-mm`, each marker also provides a local scale in millimeters per pixel, calculated from its physical outer side length and the mean length of its four detected edges in the image. Curvature and radius are then reported in `1/mm` and millimeters without an intrinsic calibration file.
+
+This conversion assumes that:
+
+- all markers have the same physical outer side length;
+- the markers face the camera approximately, because a tilted marker appears smaller than its true size;
+- the curve bends approximately in a plane parallel to the image plane.
+
+The program measures the curvature of the curve as it appears in the image. Marker depth is not used.
+
 ---
 
 ## Output Directories
@@ -186,7 +226,8 @@ Suggested directory for test and example videos.
 videos/
 ├── aruco_test.mp4
 ├── apriltag_test.mp4
-└── multiple_markers_test.mp4
+├── multiple_markers_test.mp4
+└── cable_curvature_test.mp4
 ```
 
 ---
@@ -256,6 +297,7 @@ python aruco_pose_xyz.py --help
 python charuco_generation.py --help
 python fiducial_single_video.py --help
 python fiducial_multi_video.py --help
+python fiducial_curvature.py --help
 ```
 
 ---
@@ -539,9 +581,146 @@ Press `S` during interactive playback to export the complete dashboard next to t
 
 ---
 
+## Curvature and Radius from Several Markers
+
+`fiducial_curvature.py` fits a curve through several ArUco or AprilTag markers in one video and calculates the curvature and radius of curvature at each point. The markers are connected from the lowest to the highest ID.
+
+### Basic example
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11
+```
+
+Values are reported in `1/px` and pixels because no physical marker size was provided.
+
+### Curvature and radius in millimeters
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30
+```
+
+All markers must have the same physical outer side length. Camera calibration is not required; see [Pixel and Millimeter Displacement](#pixel-and-millimeter-displacement) for the assumptions.
+
+### Select the markers that form the curve
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_4X4_250 \
+  --marker-ids 0 1 2 3 4 5 \
+  --marker-size-mm 30
+```
+
+At least three different IDs are required. When `--marker-ids` is omitted, the program automatically selects the most frequently detected IDs:
+
+- IDs detected in fewer than three frames are ignored (`--min-detections`);
+- up to twelve markers are used (`--max-markers`, maximum 12);
+- the selected markers are always connected in ascending ID order.
+
+### Set the polynomial degree
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30 \
+  --degree 4
+```
+
+`--degree` accepts values from 2 to 6; the default is 3. It is reduced automatically when fewer markers are visible, because the degree cannot exceed the number of detected markers minus one.
+
+- a lower degree gives a smoother curve and less noisy curvature but may not follow a complex shape;
+- a higher degree follows the markers more closely but amplifies detection noise;
+- with exactly `degree + 1` markers visible, the curve passes through all of them.
+
+### Reduce noise with temporal smoothing
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30 \
+  --smooth 5
+```
+
+`--smooth` applies a median filter over the selected number of frames, which must be odd, to the position and scale of each marker before the curve is fitted. The default value of `1` disables the filter. Frames in which a marker was not detected remain undetected.
+
+### Limit the displayed radius
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30 \
+  --max-radius 2000
+```
+
+A nearly straight section has a very large radius. `--max-radius` sets the largest radius treated as meaningful. Larger radii are displayed as `R > value` in the marker rows, and the value defines the upper limit of the average-radius graph. By default, the limit is calculated from the radii found in the video.
+
+### Export the results to CSV
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30 \
+  --csv curvature.csv
+```
+
+The file contains one row for each marker detected in each frame:
+
+```text
+frame
+time_s
+marker_id
+x_px
+y_px
+curvature_1_per_<unit>
+radius_<unit>
+curvature_3pt_1_per_<unit>
+radius_3pt_<unit>
+frame_mean_curvature_1_per_<unit>
+frame_mean_radius_<unit>
+```
+
+`<unit>` is `mm` when `--marker-size-mm` is provided and `px` otherwise. The 3-point values are empty at the first and last marker of each frame. The frame averages are repeated on every row of the same frame.
+
+### Full-resolution detection, window size, and dashboard export
+
+`--detect-scale`, `--frame-step`, `--width`, `--height`, and `--save` work as described for the other dashboards.
+
+```bash
+python fiducial_curvature.py videos/cable_curvature_test.mp4 \
+  --dictionary DICT_APRILTAG_36h11 \
+  --marker-size-mm 30 \
+  --detect-scale 1.0 \
+  --save output_curvature_dashboard.mp4 \
+  --width 1920 \
+  --height 1080
+```
+
+Supported export formats are `.mp4`, using `mp4v`, and `.avi`, using `MJPG`. Press `S` during interactive playback to export the complete dashboard next to the source video. The output file uses the `_curvature_dashboard` suffix and the current window dimensions.
+
+### How the curvature is calculated
+
+In each frame:
+
+1. The detected markers are sorted by ID.
+2. The curve `x(t), y(t)` is fitted to the marker centers with polynomials of the selected degree, using least squares. The parameter `t` follows the distance between consecutive markers.
+3. The signed curvature is calculated analytically from the first and second derivatives of the fitted curve:
+
+```text
+k = (x'y'' - y'x'') / (x'^2 + y'^2)^(3/2)
+R = 1 / |k|
+```
+
+4. The 3-point cross-check uses only each interior marker and its two neighbors. It is the curvature of the circle passing through those three points. It requires no fitted curve, but it is more sensitive to detection noise.
+
+The average curvature is the arithmetic mean of the signed curvature of the markers detected in the frame. The average radius is the arithmetic mean of their radii. Because radii of almost straight sections are very large, the average radius can be dominated by the straightest markers; the average curvature is generally more stable.
+
+---
+
 ## Dashboard Playback Controls
 
-The single-marker and multiple-marker dashboards use the following controls:
+The single-marker, multiple-marker, and curvature dashboards use the following controls:
 
 ```text
 SPACE          Pause or resume
@@ -584,6 +763,16 @@ For `fiducial_single_video.py` and `fiducial_multi_video.py`:
 - negative `dY` indicates movement upward.
 
 In relative mode, displacement is measured from the first frame in which each selected marker is detected. In the multiple-marker dashboard, each marker therefore has its own reference frame.
+
+### Curvature sign convention
+
+For `fiducial_curvature.py`, the curve is followed from the lowest to the highest marker ID, and the image uses a downward-pointing Y axis:
+
+- positive curvature means that the curve turns clockwise on the screen;
+- negative curvature means that the curve turns counterclockwise on the screen;
+- the radius of curvature is always positive.
+
+Reversing the ID order of the markers reverses the sign of the curvature.
 
 ---
 
@@ -654,6 +843,24 @@ Successful marker detection does not guarantee accurate metric measurements. Mea
 - camera stability.
 
 Validate the complete measurement system using known distances or objects that were not used directly during camera calibration.
+
+### Curvature and radius
+
+Curvature is a second derivative of the marker positions, so small detection errors are amplified. In addition to the factors above, the quality of `fiducial_curvature.py` results depends on:
+
+- the number of markers and their spacing along the curve, since closely spaced markers make small position errors appear as large curvature changes;
+- the polynomial degree selected with `--degree`;
+- the agreement between the fitted curve and the real shape of the object;
+- how closely the markers face the camera, which affects the millimeter scale;
+- how closely the object bends in a plane parallel to the image;
+- corner precision, which improves with `--detect-scale 1.0` and a larger marker in the image.
+
+Additional considerations:
+
+- the fitted curve is least reliable at its two ends, so the end markers are usually the least accurate; for this reason, the minimum and mean radius shown for each frame exclude the outer 5% of the curve at each end;
+- the 3-point values at the interior markers are an independent cross-check of the fitted values; large disagreement usually indicates detection noise or an unsuitable polynomial degree;
+- a very large radius means that the section is almost straight; compare curvature values rather than radii in these cases;
+- temporal smoothing with `--smooth` reduces noise but also reduces fast changes in curvature.
 
 ---
 
