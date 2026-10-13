@@ -716,6 +716,16 @@ R = 1 / |k|
 
 The average curvature is the arithmetic mean of the signed curvature of the markers detected in the frame. The average radius is the arithmetic mean of their radii. Because radii of almost straight sections are very large, the average radius can be dominated by the straightest markers; the average curvature is generally more stable.
 
+
+
+### Example
+
+
+https://github.com/user-attachments/assets/667b461b-206e-49cb-bd54-79e792b2dce0
+
+
+
+
 ---
 
 ## Dashboard Playback Controls
